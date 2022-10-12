@@ -1,0 +1,113 @@
+version: "3.3"
+
+networks:
+    # Allow the use of traefik in other docker-compose.yml files
+    traefik:
+        external: true
+    backend:
+
+services:
+
+  traefik:
+    image: "traefik:v2.2"
+    container_name: "traefik"
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+    command:
+      # Only for development environment
+      - "--log.level=DEBUG"
+      - "--api.insecure=true"
+      # Get Docker as the provider
+      - "--providers.docker=true"
+      # Avoid that all containers are exposed
+      - "--providers.docker.exposedbydefault=false"
+      # Settle the ports for the entry points
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web-secure.address=:443"
+      # Settle the autentification method to http challenge
+      - "--certificatesresolvers.myhttpchallenge.acme.httpchallenge=true"
+      - "--certificatesresolvers.myhttpchallenge.acme.httpchallenge.entrypoint=web"
+      # Uncomment this to get a fake certificate when testing
+      #- "--certificatesresolvers.myhttpchallenge.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory"
+      # Settle letsencrypt as the certificate provider
+      - "--certificatesresolvers.myhttpchallenge.acme.email=me@mail.com"
+      - "--certificatesresolvers.myhttpchallenge.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+    networks:
+      - traefik
+    volumes:
+      # Store certificates in ./letsencrypt/acme.json
+      - "./letsencrypt:/letsencrypt"
+      # Connect to Doker socket
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+  db:
+    # this is the database used by Wordpress
+    image: mysql:5.7
+    restart: always
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      # Connect WordPrerss to the database
+      MYSQL_DATABASE: user_mg
+      MYSQL_USER: user_mg
+      MYSQL_PASSWORD: user_mg
+      MYSQL_ROOT_PASSWORD: password
+    volumes:
+      # Persist the database on disk
+      - ./db:/var/lib/mysql
+    networks:
+      - traefik
+
+  phpmyadmin:
+     depends_on:
+       - db
+     image: phpmyadmin/phpmyadmin
+     restart: always
+     ports:
+       - 7777:80
+     environment:
+       PMA_HOST: db
+       # login: root 
+       MYSQL_ROOT_PASSWORD: password 
+       UPLOAD_LIMIT: 300M
+     labels:
+      # The labels are usefull for Traefik only
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik"
+      # Get the routes from http
+      - "traefik.http.routers.phpmyadmin.rule=Host(`phpmyadmin.localhost`)"
+      - "traefik.http.routers.phpmyadmin.entrypoints=web"
+      # Redirect these routes to https
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+      - "traefik.http.routers.phpmyadmin.middlewares=redirect-to-https@docker"
+      # Get the routes from https
+      - "traefik.http.routers.phpmyadmin-secured.rule=Host(`phpmyadmin.localhost`)"
+      - "traefik.http.routers.phpmyadmin-secured.entrypoints=web-secure"
+      # Apply autentificiation with http challenge
+      - "traefik.http.routers.phpmyadmin-secured.tls=true"
+      - "traefik.http.routers.phpmyadmin-secured.tls.certresolver=myhttpchallenge"
+     networks:
+      - traefik
+
+  redis:
+    image: redis:6
+    restart: always
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      - "6379:6379"
+    networks:
+      - traefik
+    # launch Redis in cache mode with :
+    #  - max memory up to 50% of your RAM if needed (--maxmemory 512mb)
+    #  - deleting oldest data when max memory is reached (--maxmemory-policy allkeys-lru)
+    entrypoint: redis-server --maxmemory 2048mb --maxmemory-policy allkeys-lru
