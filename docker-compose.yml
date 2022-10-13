@@ -9,42 +9,48 @@ networks:
 services:
 
   traefik:
-    image: "traefik:v2.2"
-    container_name: "traefik"
-    logging:
-      options:
-        max-size: "10m"
-        max-file: "3"
-    command:
-      # Only for development environment
-      - "--log.level=DEBUG"
-      - "--api.insecure=true"
-      # Get Docker as the provider
-      - "--providers.docker=true"
-      # Avoid that all containers are exposed
-      - "--providers.docker.exposedbydefault=false"
-      # Settle the ports for the entry points
-      - "--entrypoints.web.address=:80"
-      - "--entrypoints.web-secure.address=:443"
-      # Settle the autentification method to http challenge
-      - "--certificatesresolvers.myhttpchallenge.acme.httpchallenge=true"
-      - "--certificatesresolvers.myhttpchallenge.acme.httpchallenge.entrypoint=web"
-      # Uncomment this to get a fake certificate when testing
-      #- "--certificatesresolvers.myhttpchallenge.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory"
-      # Settle letsencrypt as the certificate provider
-      - "--certificatesresolvers.myhttpchallenge.acme.email=me@mail.com"
-      - "--certificatesresolvers.myhttpchallenge.acme.storage=/letsencrypt/acme.json"
+    image: traefik:v2.3
+    container_name: traefik
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     ports:
-      - "80:80"
-      - "443:443"
-      - "8080:8080"
+      # Web
+      - 80:80
+      - 443:443
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # On map la conf statique dans le conteneur
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      # On map la conf dynamique statique dans le conteneur
+      - ./traefik/config.yml:/etc/traefik/config.yml:ro
+      # On map les certificats dans le conteneur
+      - ./certs:/etc/certs:ro
     networks:
       - traefik
-    volumes:
-      # Store certificates in ./letsencrypt/acme.json
-      - "./letsencrypt:/letsencrypt"
-      # Connect to Doker socket
-      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+    labels:
+      # Permettre à ce conteneur d'être accessible par traefik
+      # Pour plus d'information, voir : https://docs.traefik.io/providers/docker/#exposedbydefault
+      - "traefik.enable=true"
+      # Utilise la configuration du routeur "traefik" définie dans le fichier de configuration dynamique : ./traefik/config.yml
+      - "traefik.http.routers.traefik=true"
+
+  whoami:
+    image: containous/whoami
+    container_name: whoami
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      - "traefik.enable=true"
+      # URL pour accéder à ce conteneur
+      - "traefik.http.routers.whoami.rule=Host(`whoami.docker.localhost`)"
+      # Activation de TLS
+      - "traefik.http.routers.whoami.tls=true"
+      # Si le port est différent de 80, utilisez le service suivant:
+      # - "traefik.http.services.<service_name>.loadbalancer.server.port=<port>"
+    networks:
+      - traefik
+
   db:
     # this is the database used by Wordpress
     image: mysql:5.7
@@ -65,6 +71,7 @@ services:
     networks:
       - traefik
 
+
   phpmyadmin:
      depends_on:
        - db
@@ -78,21 +85,11 @@ services:
        MYSQL_ROOT_PASSWORD: password 
        UPLOAD_LIMIT: 300M
      labels:
-      # The labels are usefull for Traefik only
       - "traefik.enable=true"
-      - "traefik.docker.network=traefik"
-      # Get the routes from http
-      - "traefik.http.routers.phpmyadmin.rule=Host(`phpmyadmin.localhost`)"
-      - "traefik.http.routers.phpmyadmin.entrypoints=web"
-      # Redirect these routes to https
-      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
-      - "traefik.http.routers.phpmyadmin.middlewares=redirect-to-https@docker"
-      # Get the routes from https
-      - "traefik.http.routers.phpmyadmin-secured.rule=Host(`phpmyadmin.localhost`)"
-      - "traefik.http.routers.phpmyadmin-secured.entrypoints=web-secure"
-      # Apply autentificiation with http challenge
-      - "traefik.http.routers.phpmyadmin-secured.tls=true"
-      - "traefik.http.routers.phpmyadmin-secured.tls.certresolver=myhttpchallenge"
+      # URL pour accéder à ce conteneur
+      - "traefik.http.routers.phpmyadmin.rule=Host(`phpmyadmin.docker.localhost`)"
+      # Activation de TLS
+      - "traefik.http.routers.phpmyadmin.tls=true"
      networks:
       - traefik
 
